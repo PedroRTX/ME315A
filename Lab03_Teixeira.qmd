@@ -1,0 +1,119 @@
+---
+title: "Lab03_Teixeira"
+author: "Pedro Rocha Teixeira - 253670"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(leaflet)
+library(tidyr)
+library(htmlwidgets)
+```
+
+## Importação dos arquivos
+
+```{r}
+# a.
+airports <- read_csv(
+  "airports.csv",
+  col_select = c(IATA_CODE, CITY, STATE, LATITUDE, LONGITUDE),
+  show_col_types = FALSE
+)
+
+airlines <- read_csv("airlines.csv", show_col_types = FALSE)
+
+processar_chunk <- function(chunk, pos) {
+  chunk %>%
+    select(DESTINATION_AIRPORT, ARRIVAL_DELAY) %>%
+    filter(!str_starts(DESTINATION_AIRPORT, "1")) %>% # c.
+    drop_na() %>%                                     # d.
+    group_by(DESTINATION_AIRPORT) %>%                 
+    summarise(                                        # e. 
+      soma_atraso = sum(ARRIVAL_DELAY),
+      n_voos = n(),
+      .groups = "drop"
+    )
+}
+
+# b. 
+estatisticas_acumuladas <- read_csv_chunked(
+  file = "flights.csv",
+  callback = DataFrameCallback$new(processar_chunk),
+  chunk_size = 1000000,
+  show_col_types = FALSE
+)
+
+# f.
+flights <- estatisticas_acumuladas %>%
+  group_by(DESTINATION_AIRPORT) %>%
+  summarise(
+    media_atraso = sum(soma_atraso) / sum(n_voos),
+    total_voos = sum(n_voos),
+    .groups = "drop"
+  )
+```
+
+## Operação de "join"
+
+a. A coluna que serve de chave na tabela flights é DESTINATION_AIRPORT.
+
+b. A coluna que serve de chave na tabela airports é IATA_CODE.
+
+```{r}
+# c.
+aeroportos_ausentes <- anti_join(
+  flights, 
+  airports, 
+  by = c("DESTINATION_AIRPORT" = "IATA_CODE")
+)
+print(aeroportos_ausentes$DESTINATION_AIRPORT)
+
+# d. & e.
+flights <- left_join(
+  flights, 
+  airports, 
+  by = c("DESTINATION_AIRPORT" = "IATA_CODE")
+)
+```
+
+## Contagem de aeroportos por estado
+
+```{r}
+aeroportos_por_estado <- airports %>%
+  drop_na(STATE) %>%
+  count(STATE, name = "num_aeroportos", sort = TRUE)
+
+print(aeroportos_por_estado, n = 60)
+```
+
+## Mapa de atrasos com leaflet
+
+```{r}
+#| eval: false
+# a. & b. & c.
+this <- leaflet(data = drop_na(flights, LATITUDE, LONGITUDE)) %>%
+  addTiles() %>%
+  addMarkers(
+    lng = ~LONGITUDE,
+    lat = ~LATITUDE,
+    popup = ~paste0(
+      "<b>Aeroporto:</b> ", DESTINATION_AIRPORT, "<br>",
+      "<b>Cidade:</b> ", CITY, ", ", STATE, "<br>",
+      "<b>Atraso Médio:</b> ", round(media_atraso, 2), " min"
+    )
+  )
+
+# d. 
+saveWidget(this, file = "mapa.html", selfcontained = TRUE)
+this
+```
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
