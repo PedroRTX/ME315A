@@ -1,0 +1,123 @@
+---
+title: "Lab05_Teixeira"
+author: "Pedro Rocha Teixeira - 253670"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(leaflet)
+library(readr)
+```
+
+
+```{r}
+analisa_aeronave <- function(tail_number, arquivo) {
+  
+  # 1. LEITURA DO ARQUIVO FLIGHTS POR PARTES 
+  filtrar_por_aeronave <- function(bloco, pos) {
+    bloco %>% 
+      filter(TAIL_NUMBER == tail_number)
+  }
+  
+  tabela_voos <- read_csv_chunked(
+    file = arquivo,
+    callback = DataFrameCallback$new(filtrar_por_aeronave),
+    chunk_size = 100000,
+    col_types = cols()
+  )
+  
+  if (nrow(tabela_voos) == 0) {
+    stop("Nenhum registro encontrado para a aeronave especificada.")
+  }
+
+  # Ordenação temporal e velocidade média (estatística de interesse)
+  tabela_voos <- tabela_voos %>%
+    arrange(YEAR, MONTH, DAY, DEPARTURE_TIME) %>%
+    mutate(
+      velocidade_media = ifelse(AIR_TIME > 0, (DISTANCE / AIR_TIME) * 60, NA)
+    )
+
+  # 2. LEITURA DAS COORDENADAS DO ARQUIVO AIRPORTS 
+  # O arquivo 'airports.csv' deve estar na mesma pasta do arquivo 'flights.csv.zip'
+  caminho_airports <- file.path(dirname(arquivo), "airports.csv")
+  
+  if (!file.exists(caminho_airports)) {
+    stop("O arquivo 'airports.csv' não foi encontrado na mesma pasta do arquivo de voos.")
+  }
+  
+  airports_data <- read_csv(caminho_airports, col_types = cols())
+
+  # Unindo as coordenadas exatas dos aeroportos de Origem e Destino
+  trajetos_com_coords <- tabela_voos %>%
+    left_join(airports_data, by = c("ORIGIN_AIRPORT" = "IATA_CODE")) %>%
+    rename(lat_origem = LATITUDE, lon_origem = LONGITUDE, nome_origem = AIRPORT) %>%
+    left_join(airports_data, by = c("DESTINATION_AIRPORT" = "IATA_CODE")) %>%
+    rename(lat_destino = LATITUDE, lon_destino = LONGITUDE, nome_destino = AIRPORT) %>%
+    filter(!is.na(lat_origem) & !is.na(lat_destino))
+
+  # 3. CONSTRUÇÃO DO MAPA INTERATIVO
+  mapa <- leaflet() %>%
+    addTiles()
+
+  # Marcadores dos aeroportos visitados
+  aeroportos_unicos <- bind_rows(
+    trajetos_com_coords %>% select(codigo = ORIGIN_AIRPORT, lat = lat_origem, lon = lon_origem, nome = nome_origem),
+    trajetos_com_coords %>% select(codigo = DESTINATION_AIRPORT, lat = lat_destino, lon = lon_destino, nome = nome_destino)
+  ) %>% distinct(codigo, .keep_all = TRUE)
+
+  mapa <- mapa %>%
+    addCircleMarkers(
+      data = aeroportos_unicos,
+      lng = ~lon, lat = ~lat,
+      popup = ~paste0("<b>Aeroporto:</b> ", nome, " (", codigo, ")"),
+      color = "blue", radius = 4, fillOpacity = 0.8
+    )
+
+  # Trajeto linear sequencial com espessura proporcional à velocidade
+  for (i in seq_len(nrow(trajetos_com_coords))) {
+    linha <- trajetos_com_coords[i, ]
+    espessura <- ifelse(is.na(linha$velocidade_media), 2, max(1, linha$velocidade_media / 100))
+
+    mapa <- mapa %>%
+      addPolylines(
+        lng = c(linha$lon_origem, linha$lon_destino),
+        lat = c(linha$lat_origem, linha$lat_destino),
+        weight = espessura,
+        color = "red",
+        opacity = 0.6,
+        popup = paste0(
+          "<b>Voo:</b> ", linha$ORIGIN_AIRPORT, " -> ", linha$DESTINATION_AIRPORT, "<br>",
+          "<b>Data:</b> ", linha$DAY, "/", linha$MONTH, "/", linha$YEAR, "<br>",
+          "<b>Velocidade Média:</b> ", round(linha$velocidade_media, 1), " mph"
+        )
+      )
+  }
+
+  # 4. RETORNO DA LISTA NOMEADA 
+  return(list(
+    tabela = tabela_voos,
+    mapa = mapa
+  ))
+}
+
+caminho_completo <- file.path("flights.csv")
+
+resultado <- analisa_aeronave(
+  tail_number = "N431WN",
+  arquivo = caminho_completo
+)
+
+```
+
+```{r renderizar_mapa, eval = FALSE}
+# Para o pdf poder ser gerado e o código da visualização do mapa aparecer no documento criei este chunk
+resultado$mapa
+```
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
