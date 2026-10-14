@@ -1,0 +1,81 @@
+---
+title: "Lab08_Teixeira"
+author: "Pedro Rocha Teixeira - 253670"
+format: pdf
+editor: visual
+---
+```{r}
+library(reticulate)
+
+py_install("polars")
+```
+
+```{python}
+import polars as pl
+
+basics = pl.scan_csv("title.basics0.tsv.gz", separator="\t", null_values=r"\N")
+ratings = pl.scan_csv("title.ratings.tsv.gz", separator="\t", null_values=r"\N")
+principals = pl.scan_csv("title.principals0.tsv.gz", separator="\t", null_values=r"\N")
+```
+
+1.  Quais são os 5 filmes com as maiores notas (`averageRating`)? Apresente uma solução capaz de desempatar os filmes baseando-se no número de votos recebidos.
+```{python}
+res1 = (
+    basics.filter(pl.col("titleType") == "movie")
+    .join(ratings, on="tconst", how="inner")
+    .with_columns([
+        pl.col("averageRating").cast(pl.Float64),
+        pl.col("numVotes").cast(pl.Int64)
+    ])
+    .sort(by=["averageRating", "numVotes"], descending=[True, True])
+    .select(["primaryTitle", "averageRating", "numVotes"])
+    .limit(5)
+    .collect()  
+)
+
+print(res1)
+```
+
+2.  Qual é o gênero mais frequente entre os filmes com nota maior que 8?
+```{python}
+res2 = (
+    basics.filter(pl.col("titleType") == "movie")
+    .join(ratings, on="tconst", how="inner")
+    .with_columns(pl.col("averageRating").cast(pl.Float64))
+    .filter(pl.col("averageRating") > 8.0)
+    .with_columns(pl.col("genres").str.split(","))
+    .explode("genres")
+    .filter(pl.col("genres").is_not_null() & (pl.col("genres") != ""))
+    .group_by("genres")
+    .agg(pl.len().alias("frequencia"))
+    .sort("frequencia", descending=True)
+    .limit(1)
+    .collect() 
+)
+
+print(res2)
+```
+
+3.  Quais são os 3 atores/atrizes que mais participaram de filmes com nota maior que 7.5?
+```{python}
+res3 = (
+    principals.filter(pl.col("category").is_in(["actor", "actress"]))
+    .join(basics.filter(pl.col("titleType") == "movie"), on="tconst", how="inner")
+    .join(ratings, on="tconst", how="inner")
+    .with_columns(pl.col("averageRating").cast(pl.Float64))
+    .filter(pl.col("averageRating") > 7.5)
+    .group_by("nconst")
+    .agg(pl.len().alias("num_filmes"))
+    .sort("num_filmes", descending=True)
+    .limit(3)
+    .collect()  
+)
+
+print(res3)
+```
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
